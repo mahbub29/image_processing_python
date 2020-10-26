@@ -73,21 +73,64 @@ def kmeans_image_segmentation(image, init_intensity_vector):
     # continue to loop whilst previous and new intensity vector products are not equal
     while np.prod(intensity_vector) != np.prod(prev_intensity_vector):
         prev_intensity_vector = intensity_vector
-        output, intensity_vector = kmeans_segmentation_process(image, intensity_vector)
+        output, intensity_vector = kmeans_3D_color_segmentation(image, intensity_vector)
+        print(intensity_vector)
 
     return output, intensity_vector
 
 
-def color_image_segmentation(image, colors):
-    image_thread = image.reshape([1,image[:,:,0].size,3])
-    for i in range(image_thread[:,:,0].size):
-        diffs = np.abs(np.sum(colors, axis=1) - np.sum(image_thread[0,i,:]))
-        cluster_identity = int(np.where(diffs==np.amin(diffs, axis=0))[0][0])
-        image_thread[0,i,:] = colors[cluster_identity,:]
-    output = image_thread.reshape(image.shape)
-    print('out')
-    print(output[:,:,0])
-    return output
+def kmeans_3D_color_segmentation(image, intensity_vector):
+    height, width, rgb = image.shape
+    image_thread = image.reshape([1, height*width, 3])
+
+    # make dictionaries to store the cluster intensity sums as well as the
+    # total number belonging to each cluster
+    k_sums, k_tots = dict(), dict()
+
+    # calculate the euclidean distance (in terms of RGB) each pixel in the image
+    # to each of the selected pixel RGB values
+    # i.e. d = sqrt(r^2 + g^2 + b^2)
+    # assign a k cluster number to each set of RGB differences
+    delta_rgb = np.zeros([len(intensity_vector), height*width])
+    label_array = np.ones(delta_rgb.shape)
+    for i in range(len(intensity_vector)):
+        k_sums[i+1] = np.array([[0,0,0]]) # this must be a 1 by 3 array for RGB values (BGR for python)
+        k_tots[i+1] = 0
+        delta_rgb[i,:] = np.sqrt(np.sum((image_thread - np.array(intensity_vector[i])).astype(int)**2, axis=2))
+        label_array[i,:] = label_array[i,:]*(i+1)
+    pixel_labels_3darray = np.dstack((delta_rgb, label_array))
+
+    # initialise an array to contain the final pixel cluster identities
+    pixel_labels_final = np.zeros([1, height*width])
+
+    # find the lowest delta_rgb out of the k groups and label the pixel as
+    # belonging to the k value with the lowest delta rgb value
+    for i in range(height*width):
+        p = np.where(pixel_labels_3darray[:,i,0]==np.amin(pixel_labels_3darray[:,i,0], axis=0))
+        pixel_labels_final[0,i] = pixel_labels_3darray[int(p[0][0]),i,1]
+        # increment the cluster group dictionary value by one
+        k_tots[int(pixel_labels_final[0,i])] += 1
+        # add the actual pixel intensity to the cluster dictionary item
+        k_sums[int(pixel_labels_final[0,i])] += image_thread[0,i,:]
+
+    # calculate the new average pixel intensity vector and return it
+    for i in range(len(intensity_vector)):
+        for c in range(len(intensity_vector[0])):
+            try:
+                intensity_vector[i,c] = np.around(k_sums[i+1][0,c]/k_tots[i+1])
+            except ZeroDivisionError:
+                intensity_vector[i,c] = int(0)
+            except ValueError:
+                intensity_vector[i, c] = int(0)
+
+    # get the output image
+    output = np.zeros(image_thread.shape)
+    for i in range(height*width):
+        output[0,i,:] = intensity_vector[int(pixel_labels_final[0,i]-1)]
+    output = output/np.max(output, axis=1)
+    output = output.reshape([height,width,rgb])
+
+    return output, intensity_vector
 
 
 class SegmentedImage:
@@ -134,8 +177,7 @@ class SegmentedImage:
                         if init_intensities[0].size < 3:
                             ### FOR GRAYSCALE IMAGE ###
                             init_intensities = np.array(init_intensities).reshape([len(init_intensities), 1])
-                            out, i_vector = kmeans_image_segmentation(self.image, init_intensities)
-                            cv2.imshow('output', out)
+                            out, i_vec = kmeans_image_segmentation(self.image, init_intensities)
                         else:
                             ### FOR RGB IMAGE ###
                             # separate the intensities into their RGB components
@@ -145,32 +187,13 @@ class SegmentedImage:
                                 else:
                                     intensity_vector = np.concatenate((intensity_vector,init_intensities[i]))
                             init_intensities = intensity_vector.reshape([len(init_intensities),3])
-                            init_blue = np.array(init_intensities[:,0]).reshape([len(init_intensities[:,0]),1])
-                            init_green = np.array(init_intensities[:,1]).reshape([len(init_intensities[:,1]),1])
-                            init_red = np.array(init_intensities[:,2]).reshape([len(init_intensities[:,2]),1])
+                            print(init_intensities)
 
-                            # output the RGB components
-                            blue_out, blue_vec = kmeans_image_segmentation(self.image[:,:,0], init_blue)
-                            green_out, green_vec = kmeans_image_segmentation(self.image[:,:,1], init_green)
-                            red_out, red_vec = kmeans_image_segmentation(self.image[:,:,2], init_red)
-                            colors = np.concatenate((blue_vec, green_vec, red_vec), axis=1)
-                            print(colors)
-
-                            # combine RGB components for the final image
-                            # This uses only k distinct colors from the variable colors based
-                            # on how many pixels have been selected
-                            out1 = color_image_segmentation(self.image, colors)
-                            # This uses k different values for each RGB, but combines them to make
-                            # different colors based on how close the RGB values are to the calculated RGBs
-                            out2 = np.dstack((blue_out, green_out, red_out))
-                            np.savetxt('out2blue.csv', np.around(out2[:,:,0]*255), delimiter=',')
-                            np.savetxt('out2green.csv', np.around(out2[:,:,1]*255), delimiter=',')
-                            np.savetxt('out2red.csv', np.around(out2[:,:,2]*255), delimiter=',')
-                            print(out2[:,:,0])
-                            cv2.imshow('output - k colors', out1)
-                            cv2.imshow('output - k RGB values', out2)
+                            out, i_vec = kmeans_image_segmentation(self.image, init_intensities)
+                            print(i_vec)
 
                         print("FINISHED")
+                        cv2.imshow('output - k colors', out)
                         cv2.waitKey(0)
                         notQuit = False
                         cv2.destroyAllWindows()
