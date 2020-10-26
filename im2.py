@@ -65,16 +65,24 @@ def kmeans_segmentation_process(image, intensity_vector):
     return output, intensity_vector
 
 
-def kmeans_image_segmentation(image, init_intensity_vector):
+def kmeans_image_segmentation(image, init_intensity_vector, dims=3):
     # set arbitrary previous intensity vector to initially compare to
     prev_intensity_vector = np.ones([init_intensity_vector.size,1])*1000
     intensity_vector = init_intensity_vector
 
-    # continue to loop whilst previous and new intensity vector products are not equal
-    while np.prod(intensity_vector) != np.prod(prev_intensity_vector):
+    if dims==3:
+        # continue to loop whilst previous and new intensity vector products are not equal
+        while np.prod(intensity_vector) != np.prod(prev_intensity_vector):
+            prev_intensity_vector = intensity_vector
+            output, intensity_vector = kmeans_3D_color_segmentation(image, intensity_vector)
+            print(intensity_vector)
+    elif dims==5:
+        # continue to loop whilst previous and new intensity vector products are not equal
         prev_intensity_vector = intensity_vector
-        output, intensity_vector = kmeans_3D_color_segmentation(image, intensity_vector)
+        output, intensity_vector = kmeans_5D_color_segmentation(image, intensity_vector)
         print(intensity_vector)
+    else:
+        print("dims MUST BE 3 OR 5")
 
     return output, intensity_vector
 
@@ -133,6 +141,67 @@ def kmeans_3D_color_segmentation(image, intensity_vector):
     return output, intensity_vector
 
 
+def kmeans_5D_color_segmentation(image, i_vec_5d):
+    height, width, rgb = image.shape
+    image_thread = image.reshape([1,height*width,3])
+    image_thread_ij = np.zeros([1,height*width,2])
+    count = 0
+    for i in range(height):
+        for j in range(width):
+            image_thread_ij[0,count,:] = np.array([[i,j]])
+            count += 1
+    image_thread = np.dstack((image_thread, image_thread_ij))
+
+    # make dictionaries to store the cluster intensity sums as well as the
+    # total number belonging to each cluster
+    k_sums, k_tots = dict(), dict()
+
+    # calculate the root square distance (in terms of RGBij) each pixel in the image
+    # to each of the selected pixel RGB values
+    # i.e. d = sqrt(r^2 + g^2 + b^2 + i^2 + j^2)
+    # assign a k cluster number to each set of RGB differences
+    delta_rgbij = np.zeros([int(i_vec_5d.shape[0]), height*width])
+    label_array = np.ones(delta_rgbij.shape)
+    for i in range(int(i_vec_5d.shape[0])):
+        k_sums[i+1] = np.array([[0,0,0,0,0]]) # this must be a 1 by 3 array for RGB values (BGR for python)
+        k_tots[i+1] = 0
+        delta_rgbij[i,:] = np.sqrt(np.sum((image_thread - np.array(i_vec_5d[i,:])).astype(int)**2, axis=2))
+        label_array[i,:] = label_array[i,:]*(i+1)
+    pixel_labels_3darray = np.dstack((delta_rgbij, label_array))
+
+    # initialise an array to contain the final pixel cluster identities
+    pixel_labels_final = np.zeros([1, height*width])
+
+    # find the lowest delta_rgbij out of the k groups and label the pixel as
+    # belonging to the k value with the lowest delta rgb value
+    for i in range(height*width):
+        p = np.where(pixel_labels_3darray[:,i,0]==np.amin(pixel_labels_3darray[:,i,0], axis=0))
+        pixel_labels_final[0,i] = pixel_labels_3darray[int(p[0][0]),i,1]
+        # increment the cluster group dictionary value by one
+        k_tots[int(pixel_labels_final[0,i])] += 1
+        # add the actual pixel intensity to the cluster dictionary item
+        k_sums[int(pixel_labels_final[0,i])] += image_thread[0,i,:].astype(int)
+
+    # calculate the new average pixel intensity vector and return it
+    for i in range(i_vec_5d.shape[0]):
+        for c in range(i_vec_5d.shape[1]):
+            try:
+                i_vec_5d[i,c] = np.around(k_sums[i+1][0,c]/k_tots[i+1])
+            except ZeroDivisionError:
+                i_vec_5d[i,c] = int(0)
+            except ValueError:
+                i_vec_5d[i, c] = int(0)
+
+    # get the output image
+    output = np.zeros([1,height*width,3])
+    for i in range(height*width):
+        output[0,i,:] = i_vec_5d[int(pixel_labels_final[0,i]-1), :3]
+    output = output/np.max(output, axis=1)
+    output = output.reshape([height,width,rgb])
+
+    return output, i_vec_5d
+
+
 class SegmentedImage:
     def __init__(self, image):
         self.image = image
@@ -172,8 +241,19 @@ class SegmentedImage:
                     if key2 == ord("y"):
                         print("RUNNING K-MEANS SEGMENTATION")
                         init_intensities = list()
+                        init_intensities_5d = list()
+
                         for i, j in left_clicks:
                             init_intensities.append(self.image[j, i])
+                            init_intensities_5d.append(np.ndarray.tolist(self.image[j, i]))
+
+                        # for 5D include the pixel coordinates to the initial selected intensitites
+                        # i.e. the intensity dimensions will be [B, G, R, i, j]
+                        for i in range(len(left_clicks)):
+                            init_intensities_5d[i].append(left_clicks[i][1])
+                            init_intensities_5d[i].append(left_clicks[i][0])
+                        init_intensities_5d = np.array(init_intensities_5d)
+
                         if init_intensities[0].size < 3:
                             ### FOR GRAYSCALE IMAGE ###
                             init_intensities = np.array(init_intensities).reshape([len(init_intensities), 1])
@@ -187,13 +267,17 @@ class SegmentedImage:
                                 else:
                                     intensity_vector = np.concatenate((intensity_vector,init_intensities[i]))
                             init_intensities = intensity_vector.reshape([len(init_intensities),3])
-                            print(init_intensities)
 
-                            out, i_vec = kmeans_image_segmentation(self.image, init_intensities)
-                            print(i_vec)
+                            out3d, i_vec3d = kmeans_image_segmentation(self.image, init_intensities)
+                            out5d, i_vec5d = kmeans_image_segmentation(self.image, init_intensities_5d, dims=5)
+                            print('FINAL 3D VECTOR')
+                            print(i_vec3d)
+                            print('FINAL 5D VECTOR')
+                            print(i_vec5d)
 
                         print("FINISHED")
-                        cv2.imshow('output - k colors', out)
+                        cv2.imshow('3D output - %s colors' %str(i_vec3d.shape[0]), out3d)
+                        cv2.imshow('5D output - %s colors' %str(i_vec5d.shape[0]), out5d)
                         cv2.waitKey(0)
                         notQuit = False
                         cv2.destroyAllWindows()
@@ -220,7 +304,7 @@ class SegmentedImage:
 
 if __name__=="__main__":
     file = 'C:\\Users\\mahbu\\OneDrive\\Pictures\\Camera Roll\\WIN_20200917_14_03_54_Pro.jpg'
-    img = cv2.imread('Lenna.png')
+    img = cv2.imread('sample_image_t1.jpg')
     print(img.shape)
 
     out = SegmentedImage(img)
