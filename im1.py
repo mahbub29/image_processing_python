@@ -6,10 +6,11 @@ def get_window(image, window_size, i, j):
     height = image.shape[0]
     width = image.shape[1]
     limit = window_size//2
+
     if i<limit:
         if j<limit:
             window = image[0:i+limit+1, 0:j+limit+1]
-        elif j>width-limit:
+        elif j>width-limit-1:
             window = image[0:i+limit+1, j-limit:width]
         else:
             window = image[0:i+limit+1, j-limit:j+limit+1]
@@ -17,23 +18,23 @@ def get_window(image, window_size, i, j):
         if i<limit:
             window = image[0:i+limit+1, 0:j+limit+1]
         elif i>height-limit:
-            window = image[i-limit-1:height-1, 0:j+limit+1]
+            window = image[i-limit:height, 0:j+limit+1]
         else:
             window = image[i-limit:i+limit+1, 0:j+limit+1]
     elif i>height-limit-1:
         if j<limit:
             window = image[i-limit:height, 0:j+limit+1]
-        elif j>width-limit:
-            window = image[i-limit:height, j-limit-1:width-1]
+        elif j>width-limit-1:
+            window = image[i-limit:height, j-limit:width]
         else:
             window = image[i-limit:height, j-limit:j+limit+1]
     elif j>width-limit-1:
         if i<limit:
-            window = image[0:i+limit+1, j-limit-1:width]
-        elif i>height-limit:
-            window = image[i-limit:height-1, j-limit-1:width]
+            window = image[0:i+limit+1, j-limit:width]
+        elif i>height-limit-1:
+            window = image[i-limit:height, j-limit:width]
         else:
-            window = image[i-limit:i+limit+1, j-limit-1:width]
+            window = image[i-limit:i+limit+1, j-limit:width]
     else:
         window = image[i-limit:i+limit+1, j-limit:j+limit+1]
     return window
